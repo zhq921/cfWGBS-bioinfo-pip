@@ -2,7 +2,9 @@
 A comprehensive and rigid computational framework to identify reliable cfDNA methylation biomarkers from cfWGBS data
 
 > This repository provides the code for the paper "Cell-free DNA methylomes from plasma droplets enable sensitive breast cancer detection and classification".
-![computational workflow]()
+
+![computational workflow](https://github.com/zhq921/cfWGBS-bioinfo-pip/blob/master/imgs/computational_workflow.png)
+
 ** 1) Identification of cfDNA recurrent regions in populations of two cohorts of normal and breast cancer samples. **
 
 To reduce the impact of missing values of cfDNA fragment in the cohorts of samples, the cfDNA recurrent regions with population of samples were identified based on Poisson test in normal cfDNA samples and breast cancer cfDNA samples respectively. The recurrence ratio of each site was calculated using the percentage of samples, which covered by at least 1 read at the site. High confidence cfDNA recurrent regions were selected by the stringent threshold with p value < 0.01 and the recurrence ratio at each site >70%. The overlapping regions between recurrent regions of breast cancer cfDNA samples and those of normal cfDNA samples were extracted as reference recurrent regions for further analysis.
