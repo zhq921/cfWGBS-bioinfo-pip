@@ -1,7 +1,7 @@
 # cfWGBS-bioinfo-pip
 A comprehensive and rigid computational framework to identify reliable cfDNA methylation biomarkers from cfWGBS data
 
-> This repository provides the code for the paper "Droplet-plasma-capable whole genome cfDNA methylomes translated into sensitive cancer detection and classification".
+> This repository provides the code for the paper "Whole-genome circulating tumor DNA methylomes of minimal plasma for sensitive detection and molecular classification of cancer".
 
 ![computational workflow](https://github.com/zhq921/cfWGBS-bioinfo-pip/blob/master/imgs/computational_workflow.png)
 
