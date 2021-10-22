@@ -3,7 +3,7 @@ A comprehensive and rigid computational framework to identify reliable cfDNA met
 
 > This repository provides the code for the paper "Whole-genome circulating tumor DNA methylomes of minimal plasma for sensitive detection and molecular classification of cancer".
 
-<img src="https://github.com/zhq921/cfWGBS-bioinfo-pip/blob/master/imgs/computational_workflow.png" width = "70%" />
+<img src="https://github.com/zhq921/cfWGBS-bioinfo-pip/blob/master/imgs/computational_workflow.png" width = "50%" />
 
 ##### 1) Identification of cfDNA recurrent regions in populations of two cohorts of normal and breast cancer samples. 
 To reduce the impact of missing values of cfDNA fragment in the cohorts of samples, the cfDNA recurrent regions with population of samples were identified based on Poisson test in normal cfDNA samples and breast cancer cfDNA samples respectively. The recurrence ratio of each site was calculated using the percentage of samples, which covered by at least 1 read at the site. High confidence cfDNA recurrent regions were selected by the stringent threshold with p value < 0.01 and the recurrence ratio at each site >70%. The overlapping regions between recurrent regions of breast cancer cfDNA samples and those of normal cfDNA samples were extracted as reference recurrent regions for further analysis.
