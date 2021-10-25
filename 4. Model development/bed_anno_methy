@@ -1,0 +1,310 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+use Getopt::Long;
+
+#get annotation and methylation matrix for regions based on 450K annotation information
+our $VERSION = "v1.1.0";
+
+# params control
+my $length_cutoff = 200;
+my $cg_count_cutoff = 5;
+my $region_identifier = "REGION";
+my (
+	$help,
+
+	$region_file,			#region(bed)
+    $methy_file,			#methylation matrix
+	$gpl_450K_file,			#gpl 450K annotation file
+
+    $region_header,
+
+	$outdir,
+);
+
+GetOptions(
+	'help|man|h'       => \$help,
+
+	'r|region_file=s'  => \$region_file,
+    'm|methy_file=s'   => \$methy_file,
+    'g|gpl_file=s'     => \$gpl_450K_file,
+
+    'rh|region_header'     => \$region_header,
+    'lc|length_cutoff=s'   => \$length_cutoff,
+    'cc|cg_count_cutoff=s' => \$cg_count_cutoff,
+	'ri|region_identifier=s' => \$region_identifier,
+
+    'o|outdir=s'       => \$outdir,
+);
+
+print_helpfile() if($help);
+required_args($region_file, $methy_file, $gpl_450K_file, $outdir);
+outdir_control($outdir);
+
+# Reading 450K GPL
+warn call_time()."1. Reading 450K GPL Annotation Information.\n";
+my %chr_probe = (); #chr => (pos1, pos2, ...)
+my %pos_id = ();    #pos => probe; eg: 8553009 => cg00035864
+my %pos_info = ();  #pos => gene, group, cgi
+
+my $gpl_fh;
+if( $gpl_450K_file =~ /gz$/ ){
+	open $gpl_fh,"zcat $gpl_450K_file |" or die $gpl_450K_file." open error, Please check up this path!\n";
+}
+else{
+	open $gpl_fh,"<",$gpl_450K_file or die $gpl_450K_file." open error, Please check up this path!\n";
+}
+while(<$gpl_fh>){
+    if(/^cg/ or /^ch/){     #cg probe or ch probe
+        s/[\r\n]//g;
+        my @arr = split /,/;
+        my ($probe, $chr, $pos, $gene, $group, $cgi) = @arr[0,11,12,21,23,25];
+        # rename chr, cgi, gene, group
+        $chr = "chr$chr";
+        $cgi = "Open_Sea" unless $cgi;
+        unless($gene){
+            $gene = "Intergenic";
+            $group = "Intergenic";
+        }
+        # store in hash
+        push @{ $chr_probe{$chr} }, $pos;
+    	$pos_id{"$chr,$pos"} = $probe;
+	    $pos_info{"$chr,$pos"} = "$gene\t$group\t$cgi";
+    }
+}
+close $gpl_fh;
+
+warn call_time()."2. Annotation for each region.\n";
+open ALL,">","$outdir/all_region_probe.txt" or die $!;
+open OUT,">","$outdir/filtered_region_probe.txt" or die $!;
+foreach my $chr(sort keys %chr_probe){
+    # Reading DMR
+	open REGION,"<",$region_file or die $!;
+	<REGION> if($region_header);
+    my @raw_dmrs = ();
+	while(<REGION>){
+		s/[\r\n]//g;
+		my ($curChr, $start, $end) = split /\t/;
+		next if($curChr ne $chr);
+
+		push @raw_dmrs, [$start, $end];
+	}
+    close REGION;
+    my @sorted_dmrs = sort { $a->[0] <=> $b->[0] or $a->[1] <=> $b->[1] } @raw_dmrs;
+
+	# probe to dmr
+	my $site_ref = $chr_probe{$chr};
+    my @sorted_sites = sort {$a <=> $b} @$site_ref;   #sort probe array.
+
+	my $site_index = 0;
+	foreach my $i(0..$#sorted_dmrs){
+		my ( $start, $end ) = ( $sorted_dmrs[$i][0], $sorted_dmrs[$i][1] );
+
+		my @dmr_sites = ();
+		while( $sorted_sites[$site_index] < $start ){
+			last if ( $site_index >= $#sorted_sites );
+			$site_index ++;
+		}
+		while( $sorted_sites[$site_index] <= $end ){  #all sites in region. ( >= start and <= end )
+			last if ( $site_index >= $#sorted_sites );
+			push @dmr_sites, $sorted_sites[$site_index];
+			$site_index ++;
+		}
+
+        # dmr has probes
+		if(@dmr_sites){
+            # probe name
+            my @probes = ();
+			foreach my $site(@dmr_sites){
+				push @probes, $pos_id{"$chr,$site"}
+			}
+            # gene, group, cgi : delete intergenic for some dmr.
+			my %gene_hs = ();
+			my %group_hs = ();
+			my %cgi_hs = ();
+			foreach my $site(@dmr_sites){
+				my ($gene_str, $group_str, $cgi) = split /\t/, $pos_info{"$chr,$site"};
+				my @genes = split /;/, $gene_str;
+                foreach my $gene(@genes){    #store current gene list into hash
+					$gene_hs{$gene} = 1;
+				}
+
+				my @groups = split /;/, $group_str;
+                foreach my $group(@groups){
+					$group_hs{$group} = 1;
+				}
+
+				$cgi_hs{$cgi} = 1;
+			}
+			delete $gene_hs{"Intergenic"} if(keys %gene_hs >= 2);
+			delete $group_hs{"Intergenic"} if(keys %group_hs >= 2);
+            # print
+            my $line = join "\t",($chr, $start, $end, $end-$start+1, scalar @dmr_sites,
+                        (join ";",@dmr_sites),
+                        (join ";",@probes),
+                        (join ";", keys %gene_hs),
+                        (join ";", keys %group_hs),
+                        (join ";", keys %cgi_hs)
+                );
+			if($end-$start+1 >= $length_cutoff and scalar @dmr_sites >= $cg_count_cutoff){
+				print OUT "$line\n";
+			}
+			print ALL "$line\n";
+		}
+		else{
+			print ALL join "\t",($chr, $start, $end, $end-$start+1, "NA",
+                "NA", "NA", "NA", "NA", "NA");
+			print ALL "\n";
+		}
+	}
+}
+close OUT;
+close ALL;
+
+warn call_time()."3. Catch probes for each region!\n";
+# read region probe information
+my %region_cg_hs = ();
+open PROBE,"<","$outdir/filtered_region_probe.txt" or die $!;
+while(<PROBE>){
+	my @arr = split /\t/;
+	my @cg  = split /;/, $arr[6];
+	foreach my $c(@cg){
+		$region_cg_hs{$c} = 1;
+	}
+}
+close PROBE;
+
+# read methy matrix
+my $methy_fh;
+if( $methy_file =~ /gz$/ ){
+	open $methy_fh,"zcat $methy_file |" or die $methy_file." open error, Please check up this path!\n";
+}
+else{
+	open $methy_fh,"<",$methy_file or die $methy_file." open error, Please check up this path!\n";
+}
+my %cg_methy = ();
+my $head = <$methy_fh>;
+while(<$methy_fh>){
+	s/[\r\n]//g;
+	s/"//g;
+	my @arr = split /\t/;
+	$cg_methy{$arr[0]} = join "\t", @arr[1..$#arr] if(exists $region_cg_hs{$arr[0]}); #probe in dmr
+}
+close $methy_fh;
+
+warn call_time()."4. Calculate mean methylation for each region!\n";
+# calculate mean methylation
+open OUT,">","$outdir/region_matrix.txt" or die $!;
+my @samples = split /\t/, $head;
+shift @samples;
+print OUT "$region_identifier\tchr\tstart\tend\t".join "\t",@samples;
+
+open PROBE,"<","$outdir/filtered_region_probe.txt" or die $!;
+my $id = 1;
+while(<PROBE>){
+	my @arr = split /\t/;
+
+	# get sample number
+	my @cg  = split /;/, $arr[6];
+	my @a = split /\t/,$cg_methy{$cg[0]};
+	my $sample_num = scalar @a;
+
+	my @mean = ();
+
+	foreach my $m(0..$sample_num - 1){  #for each sample
+		my $sum = 0;
+		my $num = 0;
+		foreach my $c(@cg){	#for each probe
+			if($cg_methy{$c}){
+				my @cg_methy_arr = split /\t/,$cg_methy{$c};
+				if($cg_methy_arr[$m] ne "NA"){
+					$sum += $cg_methy_arr[$m];
+					$num ++;
+				}
+			}
+		}
+		if($num > 0){
+			$mean[$m] = sprintf "%.3f",$sum / scalar @cg;
+		}
+		else{
+			$mean[$m] = "NA";
+		}
+	}
+	print OUT join "\t",("$region_identifier$id", @arr[0..2], @mean);
+	print OUT "\n";
+
+	$id ++;
+}
+close PROBE;
+warn call_time()."End!\n";
+
+# help file
+sub print_helpfile{
+	print qq(
+bed_anno_methy VERSION: $VERSION
+
+---------------------------------- H E L P ---------------------------------------
+bed_anno_methy help you to annotate regions and calculate their methylation.
+NOTE: This program maybe cost a few minutes, recommand to use Linux Server (128G RAM, ~1000 regions, ~1.7G methylation matrix, cost ~5mins).
+
+-------------------
+USAGE:	bed_anno_methy <BED> <450K_GPL> <METH> <OUTDIR>
+-------------------
+ARGUMENTS:
+	--help,--man,-h
+				display this helpfile
+ OPTION:
+	-rh,--region_header
+				input region file has a header
+	-lc,--length_cutoff
+				exclude regions which length <= length_cutoff, DEFAULT: 200
+	-cc,--cg_count_cutoff
+				exclude regions which CG counts <= cg_count_cutoff, DEFAULT: 5
+	-ri,--region_identifier
+				set region identifier, DEFAULT: REGION
+
+ I/O:
+ 	-r,--region
+ 				region file, the first three columns requires to be: chr, start, end. sorted chr,start is not necessary.
+ 	-m,--methy
+ 				methylation matrix, first column is probes, first row is sample names, sorted probes is not necessary.
+ 	-g,--gpl
+ 				450K annotation file, eg. GPL13534_HumanMethylation450_15017482_v.1.1.csv.gz.  This file was downloaded from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GPL13534
+	-o,--outdir
+				(REQUIRED) Output directory.
+-------------------
+EXAMPLE:
+	bed_anno_methy -r dmrs_0.25_B100.bed -g GPL13534_HumanMethylation450_15017482_v.1.1.csv.gz -m ../2_DMR/UCEC_450K_matrix_sort.txt -o DMR -ri DMR
+	bed_anno_methy -r ../Annotation/UCSC_CGI_2018_6_6.bed -g ../Annotation/GPL13534_HumanMethylation450_15017482_v.1.1.csv.gz -m TCGA-LGG.gz -o LGG_CGI -ri CGI
+-------------------------------------------------------------------------------
+);
+	die "\n";
+}
+
+sub required_args{		#( @array )
+	my @arr = @_;
+
+	foreach my $args(@arr){
+		unless($args){
+			print "Lack required arguments.\n";
+			print_helpfile();
+		}
+	}
+}
+
+sub outdir_control{		#( string folder )
+	my $outdir = $_[0];
+
+	unless(-e $outdir){
+		mkdir $outdir or die "Can't create $outdir!\nPlease check up this path.\n";
+	}
+}
+
+sub call_time{
+	my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = localtime;
+	my @months = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
+	#my @weeks = qw(Sun Mon Tue Wed Thu Fri Sat);
+	#$year += 1900;
+
+	return "[$hour:$min:$sec $months[$mon],$mday] ";
+}
